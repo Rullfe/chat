@@ -1,0 +1,6 @@
+name = "chat"
+main = "src/index.js"
+compatibility_date = "2026-8-30"
+
+[assets]
+directory = "public"
