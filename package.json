@@ -1,9 +1,5 @@
 {
   "name": "chat",
   "version": "1.0.0",
-  "private": true,
-  "dependencies": {
-    "@noble/ed25519": "^1.7.0",
-    "@noble/hashes": "^1.4.0"
-  }
+  "private": true
 }
