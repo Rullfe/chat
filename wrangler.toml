@@ -1,3 +1,8 @@
 name = "chat"
 main = "src/index.js"
 compatibility_date = "2024-09-01"
+
+[vars]
+QQ_APP_ID = "1905527721"
+QQ_APP_SECRET = "z8HRcnzBOcq5LbsASl5Pk5RoBZyNnEf7"
+AI_API_KEY = "sk-ws-H.DDDIRLP.3qGe.MEYCIQD6e-GZwEvnZJNcFXmFQkfVinqSeWwEWHpgkC8LM9NEaAIhAN8Dj8Xt5ulTLUrsp8a4pklcjt7hkchW9KoyBCIvKN-5"
