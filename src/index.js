@@ -1,27 +1,29 @@
 // src/index.js
-const enc = new TextEncoder();
+// QQ 群机器人 + AI 中转 Worker
+// 流程：QQ群@机器人 -> Webhook 收到 GROUP_AT_MESSAGE_CREATE -> 调 AI 生成回复 -> 回推群
+// 密钥全部走环境变量（Cloudflare 后台设置，勿写进代码/仓库）
+// 必需：QQ_APP_ID, QQ_APP_SECRET, AI_API_KEY；可选：AI_BASE_URL, AI_MODEL
 
-// 暂存最近一次收到的群消息（同 isolate 内有效）
-let lastEvent = null;
+const enc = new TextEncoder();
+let tokenCache = { token: null, expiresAt: 0 };
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // 健康检查
-    if (url.pathname === '/health' && request.method === 'GET') {
-      return new Response('ok, secret_set=' + (env.BOT_SECRET ? 'yes' : 'NO'));
+    if (url.pathname === '/' || url.pathname === '/health') {
+      return Response.json({
+        ok: true,
+        qq_secret_set: !!env.QQ_APP_SECRET,
+        ai_key_set: !!env.AI_API_KEY,
+        ai_base: env.AI_BASE_URL || '(default: dashscope-intl)',
+        ai_model: env.AI_MODEL || '(default: qwen-plus)',
+      });
     }
 
-    // 查看最近一次群事件（方便拿 group_openid）
-    if (url.pathname === '/last-group' && request.method === 'GET') {
-      return Response.json(lastEvent || { message: '还没有收到群事件，请先在群里 @ 机器人' });
-    }
-
-    // QQ 回调
     if (url.pathname === '/api/qq/webhook' && request.method === 'POST') {
       try {
-        return await handleWebhook(request, env);
+        return await handleWebhook(request, env, ctx);
       } catch (e) {
         return new Response(JSON.stringify({ error: String(e), stack: e.stack }), {
           status: 500,
@@ -30,49 +32,117 @@ export default {
       }
     }
 
-    // 静态资源（ASSETS 未绑定时返回 404 而非崩溃）
-    if (env.ASSETS) {
-      return env.ASSETS.fetch(request);
-    }
     return new Response('not found', { status: 404 });
   },
 };
 
-async function handleWebhook(request, env) {
-  if (!env.BOT_SECRET) {
-    return new Response(JSON.stringify({ error: 'BOT_SECRET not set' }), { status: 500 });
+async function handleWebhook(request, env, ctx) {
+  if (!env.QQ_APP_SECRET) {
+    return new Response(JSON.stringify({ error: 'QQ_APP_SECRET not set' }), { status: 500 });
   }
-
   const body = await request.json();
 
   // op=13：回调地址验证握手
   if (body.op === 13) {
     const { plain_token, event_ts } = body.d;
-    const signature = await calcSig(env.BOT_SECRET, event_ts, plain_token);
+    const signature = await calcSig(env.QQ_APP_SECRET, event_ts, plain_token);
     return Response.json({ plain_token, signature });
   }
 
-  // op=0：业务事件
+  // op=0：业务事件（异步处理，快速返回）
   if (body.op === 0) {
-    // 暂存事件，方便通过 /last-group 查看
-    lastEvent = {
-      t: body.t,
-      group_openid: body.d?.group_openid,
-      author: body.d?.author,
-      content: body.d?.content,
-      timestamp: new Date().toISOString(),
-    };
-
-    if (body.t === 'GROUP_AT_MESSAGE_CREATE') {
-      console.log('group_openid =', body.d.group_openid);
-    }
-    if (body.t === 'GROUP_ADD_ROBOT') {
-      console.log('机器人被拉入群 group_openid =', body.d.group_openid);
-    }
+    ctx.waitUntil(handleEvent(body, env).catch((e) => console.error('handleEvent error', e)));
   }
   return Response.json({ code: 0 });
 }
 
+async function handleEvent(body, env) {
+  const t = body.t;
+  const d = body.d;
+  console.log('收到事件', t);
+
+  if (t === 'GROUP_AT_MESSAGE_CREATE') {
+    const groupOpenId = d.group_openid;
+    const memberOpenId = d.author?.member_openid;
+    const userContent = (d.content || '').trim();
+    console.log('群@消息', { groupOpenId, memberOpenId, userContent });
+
+    let aiReply;
+    try {
+      aiReply = await askAI(env, userContent);
+    } catch (e) {
+      console.error('AI 调用失败', e);
+      aiReply = '抱歉，AI 服务暂时不可用。';
+    }
+    await sendGroupMessage(env, groupOpenId, memberOpenId, aiReply);
+  }
+
+  if (t === 'GROUP_ADD_ROBOT') {
+    console.log('机器人被拉入群', d.group_openid);
+  }
+}
+
+// OpenAI 兼容的 AI 调用
+async function askAI(env, userContent) {
+  const baseUrl = (env.AI_BASE_URL || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1').replace(/\/+$/, '');
+  const model = env.AI_MODEL || 'qwen-plus';
+
+  const res = await fetch(baseUrl + '/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + env.AI_API_KEY,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: '你是群聊机器人，请用简洁、友好、自然的中文回答群成员的问题。' },
+        { role: 'user', content: userContent },
+      ],
+      temperature: 0.7,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error('AI HTTP ' + res.status + ': ' + text.slice(0, 300));
+  }
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '（AI 未返回内容）';
+}
+
+async function getAccessToken(env) {
+  if (tokenCache.token && Date.now() < tokenCache.expiresAt) return tokenCache.token;
+  const res = await fetch('https://bots.qq.com/app/getAppAccessToken', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ appId: env.QQ_APP_ID, clientSecret: env.QQ_APP_SECRET }),
+  });
+  if (!res.ok) throw new Error('getAppAccessToken HTTP ' + res.status);
+  const data = await res.json();
+  tokenCache.token = data.access_token;
+  tokenCache.expiresAt = Date.now() + (Number(data.expires_in) - 60) * 1000;
+  return data.access_token;
+}
+
+async function sendGroupMessage(env, groupOpenId, memberOpenId, text) {
+  const token = await getAccessToken(env);
+  const content = memberOpenId ? `<@${memberOpenId}> ${text}` : text;
+  const res = await fetch(`https://api.sgroup.qq.com/v2/groups/${groupOpenId}/messages`, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'QQBot ' + token,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ content }),
+  });
+  const data = await res.json().catch(() => null);
+  console.log('群消息发送结果', res.status, JSON.stringify(data));
+  if (!res.ok) throw new Error('sendGroupMessage failed ' + res.status + ' ' + JSON.stringify(data));
+  return data;
+}
+
+// WebCrypto Ed25519 签名（免第三方依赖）
 async function calcSig(secret, eventTs, plainToken) {
   let seed = secret;
   while (seed.length < 32) seed += secret;
