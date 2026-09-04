@@ -1,9 +1,3 @@
 name = "chat"
 main = "src/index.js"
 compatibility_date = "2024-09-01"
-
-[vars]
-BOT_SECRET = "xV4dDnOzbErV9oT9pWDvdM5pZK5reRF3"
-
-[assets]
-directory = "public"
