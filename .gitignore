@@ -1,0 +1,13 @@
+# Node
+node_modules/
+
+# Wrangler 本地缓存与状态（切勿提交本地密钥文件）
+.wrangler/
+.dev.vars
+
+# 预览缓存
+.preview/
+
+# 系统文件
+.DS_Store
+*.log
