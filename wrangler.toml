@@ -1,8 +1,18 @@
-name = "chat"
-main = "src/index.js"
-compatibility_date = "2024-09-01"
+# Cloudflare Worker 配置
+# 部署前必做两件事：
+#   1) 创建 KV 命名空间并把返回的 id 填到下方 id 字段
+#        npx wrangler kv namespace create KV
+#   2) 设置加密密钥（生成一个 32 字节的随机值）
+#        npx wrangler secret put ENCRYPTION_KEY
+#      生成密钥： openssl rand -base64 32
 
-[vars]
-QQ_APP_ID = "1905527721"
-QQ_APP_SECRET = "z8HRcnzBOcq5LbsASl5Pk5RoBZyNnEf7"
-AI_API_KEY = "sk-ws-H.DDDIRLP.3qGe.MEYCIQD6e-GZwEvnZJNcFXmFQkfVinqSeWwEWHpgkC8LM9NEaAIhAN8Dj8Xt5ulTLUrsp8a4pklcjt7hkchW9KoyBCIvKN-5"
+name = "api-balance-checker"
+main = "src/index.js"
+compatibility_date = "2025-03-01"
+
+# 静态资源（前端页面）由 Worker 直接托管
+assets = { directory = "./public", binding = "ASSETS" }
+
+[[kv_namespaces]]
+binding = "KV"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
