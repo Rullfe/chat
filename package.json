@@ -1,5 +1,13 @@
 {
-  "name": "chat",
-  "version": "1.0.0",
-  "private": true
+  "name": "api-balance-checker",
+  "version": "1.2.0",
+  "type": "module",
+  "description": "多平台 API 余额查询面板（Cloudflare Workers + KV）",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node test/mock-test.mjs",
+    "preview": "node test/preview-server.mjs"
+  }
 }
